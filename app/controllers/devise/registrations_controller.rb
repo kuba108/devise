@@ -37,20 +37,24 @@ class Devise::RegistrationsController < DeviseController
   # We need to use a copy of the resource because we don't want to change
   # the current user in place.
   def update
-    self.resource = resource_class.to_adapter.get!(send(:"current_#{resource_name}").to_key)
-    prev_unconfirmed_email = resource.unconfirmed_email if resource.respond_to?(:unconfirmed_email)
+    @customer = Customer.find(current_user.id)
 
-    if update_resource(resource, account_update_params)
-      if is_navigational_format?
-        flash_key = update_needs_confirmation?(resource, prev_unconfirmed_email) ?
-          :update_needs_confirmation : :updated
-        set_flash_message :notice, flash_key
-      end
-      sign_in resource_name, resource, :bypass => true
-      respond_with resource, :location => after_update_path_for(resource)
+    successfully_updated = if needs_password?(@customer, params)
+      @customer.update_with_password(params[:customer])
     else
-      clean_up_passwords resource
-      respond_with resource
+      # remove the virtual current_password attribute update_without_password
+      # doesn't know how to ignore it
+      params[:customer].delete(:current_password)
+      @user.update_without_password(params[:customer])
+    end
+
+    if successfully_updated
+      set_flash_message :notice, :updated
+      # Sign in the user bypassing validation in case his password changed
+      sign_in @customer, :bypass => true
+      redirect_to after_update_path_for(@customer)
+    else
+      render "edit"
     end
   end
 
@@ -73,6 +77,14 @@ class Devise::RegistrationsController < DeviseController
   end
 
   protected
+  
+  # check if we need password to update user data
+  # ie if password or email was changed
+  # extend this as needed
+  def needs_password?(user, params)
+    user.email != params[:user][:email] ||
+      params[:user][:password].present?
+  end
 
   def update_needs_confirmation?(resource, previous)
     resource.respond_to?(:pending_reconfirmation?) &&
